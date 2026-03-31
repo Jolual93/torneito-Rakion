@@ -21,6 +21,8 @@
     appId:             "1:514907137509:web:60816951e44f11170b7b0c"
   };
 
+  const ADMIN_PASSWORD = "JOLUAL";
+
   const app = initializeApp(firebaseConfig);
   const db  = getDatabase(app);
 
@@ -42,9 +44,17 @@
   let myIP        = null;
   let alreadyIn   = false;
   let playersList = {};
+  let isAdmin     = false;
+
+  // Verificar si ya era admin en esta sesión
+  if (sessionStorage.getItem('rakion_admin') === ADMIN_PASSWORD) {
+    isAdmin = true;
+  }
 
   window.addEventListener('load', async () => {
     myIP = await getMyIP();
+
+    updateAdminUI();
 
     const ipSnap = await get(ref(db, 'registered_ips/' + myIP));
     if (ipSnap.exists()) {
@@ -70,6 +80,53 @@
     });
   });
 
+  // Login admin
+  window.tryAdminLogin = function() {
+    const input = document.getElementById('adminPassInput').value;
+    const err   = document.getElementById('adminErr');
+    if (input === ADMIN_PASSWORD) {
+      isAdmin = true;
+      sessionStorage.setItem('rakion_admin', ADMIN_PASSWORD);
+      document.getElementById('adminLoginBox').style.display = 'none';
+      updateAdminUI();
+    } else {
+      err.textContent = 'Contraseña incorrecta.';
+      document.getElementById('adminPassInput').value = '';
+    }
+  };
+
+  window.showAdminLogin = function() {
+    const box = document.getElementById('adminLoginBox');
+    box.style.display = box.style.display === 'none' ? 'block' : 'none';
+    document.getElementById('adminErr').textContent = '';
+  };
+
+  window.adminLogout = function() {
+    isAdmin = false;
+    sessionStorage.removeItem('rakion_admin');
+    updateAdminUI();
+  };
+
+  function updateAdminUI() {
+    const adminPanel   = document.getElementById('adminPanel');
+    const adminHint    = document.getElementById('adminHint');
+    const adminBadge   = document.getElementById('adminBadge');
+
+    if (isAdmin) {
+      adminPanel.style.display  = 'block';
+      adminHint.style.display   = 'none';
+      adminBadge.style.display  = 'inline-flex';
+    } else {
+      adminPanel.style.display  = 'none';
+      adminHint.style.display   = 'block';
+      adminBadge.style.display  = 'none';
+    }
+    // actualizar botón sorteo también
+    const arr = Object.values(playersList || {});
+    const shuffleBtn = document.getElementById('shuffleBtn');
+    if (shuffleBtn) shuffleBtn.disabled = !isAdmin || arr.length < 8;
+  }
+
   window.addPlayer = async function() {
     if (alreadyIn) return;
     const name = document.getElementById('nameInput').value.trim();
@@ -94,6 +151,7 @@
   };
 
   window.removePlayer = async function(key) {
+    if (!isAdmin) return;
     const p = playersList[key];
     if (!p) return;
     await remove(ref(db, 'players/' + key));
@@ -110,6 +168,7 @@
   };
 
   window.shuffle = async function() {
+    if (!isAdmin) return;
     const arr = Object.entries(playersList).map(([k, v]) => ({ key: k, ...v }));
     if (arr.length < 8) return;
     for (let i = arr.length - 1; i > 0; i--) {
@@ -125,6 +184,7 @@
   };
 
   window.resetAll = async function() {
+    if (!isAdmin) return;
     if (!confirm('¿Borrar a todos los jugadores y empezar de cero?')) return;
     await set(playersRef, null);
     await set(sorteoRef, null);
@@ -134,6 +194,40 @@
     document.getElementById('registerForm').style.display = 'block';
     document.getElementById('errorMsg').textContent = '';
   };
+
+  // Exponer renderPlayers al scope global para que updateAdminUI pueda leer playersList
+  window._getPlayersList = () => playersList;
+  window._isAdmin = () => isAdmin;
+
+  // Parchear renderPlayers para que actualice el botón shuffle
+  function renderPlayers(obj) {
+    const entries = Object.entries(obj || {});
+    document.getElementById('playerCount').textContent = entries.length;
+
+    const shuffleBtn = document.getElementById('shuffleBtn');
+    if (shuffleBtn) shuffleBtn.disabled = !isAdmin || entries.length < 8;
+
+    const warn = document.getElementById('warningMsg');
+    if (entries.length > 0 && entries.length < 8) {
+      warn.style.display = 'block';
+      warn.textContent = 'Faltan ' + (8 - entries.length) + ' jugador(es) más para el sorteo.';
+    } else { warn.style.display = 'none'; }
+
+    const list = document.getElementById('playersList');
+    if (!entries.length) { list.innerHTML = '<div class="empty-msg">Nadie apuntado aún...</div>'; return; }
+    entries.sort((a,b) => (a[1].ts||0)-(b[1].ts||0));
+    list.innerHTML = entries.map(([key,p],i) =>
+      '<div class="player-item">' +
+        '<div class="player-num">'+(i+1)+'</div>' +
+        '<div class="player-avatar '+CLASS_CSS[p.cls]+'">'+CLASS_ICONS[p.cls]+'</div>' +
+        '<div class="player-name">'+escHtml(p.name)+'</div>' +
+        '<div class="player-class">'+p.cls+'</div>' +
+        (isAdmin ? '<button class="btn btn-danger" onclick="removePlayer(\''+escAttr(key)+'\')">✕</button>' : '') +
+      '</div>'
+    ).join('');
+  }
+
+  window.__renderPlayers = renderPlayers;
 </script>
 
 <style>
@@ -144,33 +238,70 @@
     --text: #e8dfc8; --muted: #7a7060;
   }
   * { margin:0; padding:0; box-sizing:border-box; }
-  body {
-    background: #0a0a0f; color: var(--text);
-    font-family: 'Crimson Pro', Georgia, serif;
-    min-height: 100vh; overflow-x: hidden;
-  }
-  body::before {
-    content:''; position:fixed; inset:0;
-    background-image:
-      radial-gradient(1px 1px at 20% 30%, rgba(201,168,76,0.4) 0%, transparent 100%),
-      radial-gradient(1px 1px at 60% 70%, rgba(201,168,76,0.3) 0%, transparent 100%),
-      radial-gradient(1px 1px at 80% 20%, rgba(201,168,76,0.2) 0%, transparent 100%);
-    pointer-events:none; z-index:0;
-  }
-  body::after {
-    content:''; position:fixed; inset:0;
-    background-image:
-      linear-gradient(rgba(201,168,76,0.03) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(201,168,76,0.03) 1px, transparent 1px);
-    background-size:60px 60px; pointer-events:none; z-index:0;
-  }
+  body { background:#0a0a0f; color:var(--text); font-family:'Crimson Pro',Georgia,serif; min-height:100vh; overflow-x:hidden; }
+  body::before { content:''; position:fixed; inset:0; background-image: radial-gradient(1px 1px at 20% 30%,rgba(201,168,76,0.4) 0%,transparent 100%), radial-gradient(1px 1px at 60% 70%,rgba(201,168,76,0.3) 0%,transparent 100%), radial-gradient(1px 1px at 80% 20%,rgba(201,168,76,0.2) 0%,transparent 100%); pointer-events:none; z-index:0; }
+  body::after { content:''; position:fixed; inset:0; background-image: linear-gradient(rgba(201,168,76,0.03) 1px,transparent 1px), linear-gradient(90deg,rgba(201,168,76,0.03) 1px,transparent 1px); background-size:60px 60px; pointer-events:none; z-index:0; }
+
   .container { position:relative; z-index:1; max-width:860px; margin:0 auto; padding:32px 20px 60px; }
+
   header { text-align:center; margin-bottom:40px; animation:fadeDown 0.6s ease both; }
   .logo-line { display:flex; align-items:center; justify-content:center; gap:16px; margin-bottom:4px; }
   .logo-line::before,.logo-line::after { content:''; flex:1; height:1px; max-width:120px; background:linear-gradient(to right,transparent,var(--gold-dim)); }
   .logo-line::after { background:linear-gradient(to left,transparent,var(--gold-dim)); }
   .brand { font-family:'Cinzel Decorative',serif; font-size:clamp(28px,6vw,48px); font-weight:900; color:var(--gold); letter-spacing:4px; text-shadow:0 0 40px rgba(201,168,76,0.4),0 2px 4px rgba(0,0,0,0.8); }
   .subtitle { font-family:'Cinzel',serif; font-size:13px; letter-spacing:8px; color:var(--muted); text-transform:uppercase; margin-top:6px; }
+
+  /* Admin badge en el header */
+  .header-admin { display:flex; align-items:center; justify-content:center; gap:10px; margin-top:12px; }
+  .admin-badge {
+    display:none; align-items:center; gap:6px;
+    background:rgba(201,168,76,0.12);
+    border:1px solid rgba(201,168,76,0.35);
+    border-radius:20px; padding:4px 12px 4px 8px;
+    font-family:'Cinzel',serif; font-size:9px;
+    letter-spacing:3px; color:var(--gold);
+    text-transform:uppercase;
+  }
+  .admin-badge::before { content:'★'; font-size:11px; }
+  .admin-logout {
+    background:transparent; border:none; cursor:pointer;
+    font-family:'Cinzel',serif; font-size:8px;
+    letter-spacing:2px; color:var(--muted);
+    text-transform:uppercase; padding:0 0 0 6px;
+    border-left:1px solid rgba(201,168,76,0.2);
+    margin-left:4px;
+  }
+  .admin-logout:hover { color:#e57368; }
+
+  /* Admin hint (para usuarios normales) */
+  .admin-hint {
+    text-align:center; margin-top:10px;
+    font-family:'Cinzel',serif; font-size:9px;
+    letter-spacing:2px; color:var(--muted);
+  }
+  .admin-hint a { color:var(--gold-dim); cursor:pointer; text-decoration:none; border-bottom:1px dashed var(--gold-dim); }
+  .admin-hint a:hover { color:var(--gold); }
+
+  /* Login box admin */
+  .admin-login-box {
+    display:none;
+    background:rgba(201,168,76,0.05);
+    border:1px solid rgba(201,168,76,0.2);
+    border-radius:4px; padding:16px 20px;
+    margin-top:12px;
+    animation:fadeUp 0.2s ease both;
+  }
+  .admin-login-row { display:flex; gap:10px; align-items:center; }
+  .admin-pass-input {
+    flex:1; background:rgba(255,255,255,0.04);
+    border:1px solid var(--border); border-radius:3px;
+    color:var(--text); font-family:'Crimson Pro',serif;
+    font-size:16px; padding:8px 12px; outline:none;
+    letter-spacing:4px;
+    transition:border-color 0.2s;
+  }
+  .admin-pass-input:focus { border-color:var(--gold-dim); }
+  .admin-err { color:#e57368; font-size:12px; font-style:italic; margin-top:6px; min-height:16px; }
 
   .panel { background:var(--panel); border:1px solid var(--border); border-radius:4px; padding:28px; margin-bottom:24px; position:relative; animation:fadeUp 0.5s ease both; }
   .panel::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:linear-gradient(90deg,transparent,var(--gold-dim),transparent); border-radius:4px 4px 0 0; }
@@ -190,13 +321,30 @@
   .btn { font-family:'Cinzel',serif; font-size:11px; letter-spacing:3px; text-transform:uppercase; border:none; border-radius:3px; cursor:pointer; padding:11px 22px; transition:all 0.2s; white-space:nowrap; }
   .btn-primary { background:linear-gradient(135deg,var(--gold-dim),var(--gold)); color:#0a0a0f; font-weight:700; }
   .btn-primary:hover { filter:brightness(1.15); transform:translateY(-1px); }
+  .btn-sm { padding:8px 16px; font-size:10px; }
   .btn-danger { background:transparent; border:1px solid rgba(192,57,43,0.4); color:#e57368; font-size:10px; padding:4px 10px; letter-spacing:1px; }
   .btn-danger:hover { background:rgba(192,57,43,0.15); }
   .btn-shuffle { background:linear-gradient(135deg,#1a3a6a,#1a6fa0); color:#c8e4f8; border:1px solid rgba(26,111,160,0.5); font-size:13px; letter-spacing:2px; padding:13px 32px; }
-  .btn-shuffle:hover { filter:brightness(1.2); transform:translateY(-1px); }
+  .btn-shuffle:hover:not(:disabled) { filter:brightness(1.2); transform:translateY(-1px); }
   .btn-shuffle:disabled { opacity:0.35; cursor:not-allowed; transform:none; }
   .btn-reset { background:transparent; border:1px solid var(--border); color:var(--muted); font-size:10px; padding:8px 16px; }
   .btn-reset:hover { border-color:var(--gold-dim); color:var(--gold-dim); }
+
+  /* Panel admin (solo visible si eres admin) */
+  #adminPanel { display:none; }
+  .admin-panel-inner {
+    background:rgba(201,168,76,0.04);
+    border:1px solid rgba(201,168,76,0.15);
+    border-radius:3px; padding:16px 18px;
+  }
+  .admin-label {
+    font-family:'Cinzel',serif; font-size:9px;
+    letter-spacing:4px; color:var(--gold-dim);
+    text-transform:uppercase; margin-bottom:12px;
+    display:flex; align-items:center; gap:8px;
+  }
+  .admin-label::before { content:'★'; }
+  .shuffle-controls { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
 
   .live-dot { display:inline-flex; align-items:center; gap:6px; font-family:'Cinzel',serif; font-size:9px; letter-spacing:3px; color:#4caf76; text-transform:uppercase; margin-bottom:14px; }
   .live-dot::before { content:''; width:7px; height:7px; background:#4caf76; border-radius:50%; animation:pulse 1.8s ease-in-out infinite; }
@@ -215,7 +363,6 @@
   .empty-msg { text-align:center; padding:32px 0; color:var(--muted); font-style:italic; font-size:15px; opacity:0.7; }
   .warning { background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.2); border-radius:3px; padding:10px 14px; font-size:14px; color:var(--gold-dim); margin-bottom:14px; font-style:italic; display:none; }
   .error-msg { color:#e57368; font-size:13px; font-style:italic; margin-top:8px; min-height:20px; }
-  .shuffle-controls { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
 
   .teams-container { display:none; animation:fadeUp 0.4s ease both; margin-top:24px; }
   .vs-row { display:grid; grid-template-columns:1fr auto 1fr; gap:16px; align-items:stretch; }
@@ -256,8 +403,27 @@
   <header>
     <div class="logo-line"><div class="brand">RAKION</div></div>
     <div class="subtitle">Amistoso — Inscripción en vivo</div>
+    <div class="header-admin">
+      <div class="admin-badge" id="adminBadge">
+        Admin
+        <button class="admin-logout" onclick="adminLogout()">Salir</button>
+      </div>
+    </div>
+    <div class="admin-hint" id="adminHint">
+      <a onclick="showAdminLogin()">Acceso admin</a>
+    </div>
+    <div class="admin-login-box" id="adminLoginBox">
+      <div class="admin-login-row">
+        <input class="admin-pass-input" type="password" id="adminPassInput"
+          placeholder="Contraseña" maxlength="30"
+          onkeydown="if(event.key==='Enter') tryAdminLogin()">
+        <button class="btn btn-primary btn-sm" onclick="tryAdminLogin()">Entrar</button>
+      </div>
+      <div class="admin-err" id="adminErr"></div>
+    </div>
   </header>
 
+  <!-- Inscripción -->
   <div class="panel" style="animation-delay:0.1s">
     <div class="panel-title">Inscripción</div>
     <div class="already-in" id="alreadyInBanner"></div>
@@ -287,6 +453,7 @@
     </div>
   </div>
 
+  <!-- Lista jugadores -->
   <div class="panel" style="animation-delay:0.2s">
     <div class="panel-title">Jugadores inscritos</div>
     <div class="live-dot">En vivo</div>
@@ -297,16 +464,21 @@
     </div>
   </div>
 
-  <div class="panel" style="animation-delay:0.3s">
-    <div class="panel-title">Sorteo</div>
-    <div class="shuffle-controls">
-      <button class="btn btn-shuffle" id="shuffleBtn" onclick="shuffle()" disabled>
-        🎲 Chocolatear equipos
-      </button>
-      <button class="btn btn-reset" onclick="resetAll()">Reiniciar todo</button>
+  <!-- Panel sorteo (solo admin lo ve) -->
+  <div class="panel" id="adminPanel" style="animation-delay:0.3s">
+    <div class="panel-title">Control de sala</div>
+    <div class="admin-panel-inner">
+      <div class="admin-label">Acciones de admin</div>
+      <div class="shuffle-controls">
+        <button class="btn btn-shuffle" id="shuffleBtn" onclick="shuffle()" disabled>
+          🎲 Chocolatear equipos
+        </button>
+        <button class="btn btn-reset" onclick="resetAll()">Reiniciar todo</button>
+      </div>
     </div>
   </div>
 
+  <!-- Equipos -->
   <div class="teams-container" id="teamsContainer">
     <div class="panel">
       <div class="panel-title">Resultado del sorteo</div>
@@ -342,29 +514,6 @@
     b.innerHTML = '✓ Ya estás apuntado como <strong>' + escHtml(name) + '</strong>. ¡Espera el sorteo!';
   }
 
-  function renderPlayers(obj) {
-    const entries = Object.entries(obj || {});
-    document.getElementById('playerCount').textContent = entries.length;
-    document.getElementById('shuffleBtn').disabled = entries.length < 8;
-    const warn = document.getElementById('warningMsg');
-    if (entries.length > 0 && entries.length < 8) {
-      warn.style.display = 'block';
-      warn.textContent = 'Faltan ' + (8 - entries.length) + ' jugador(es) más para el sorteo.';
-    } else { warn.style.display = 'none'; }
-    const list = document.getElementById('playersList');
-    if (!entries.length) { list.innerHTML = '<div class="empty-msg">Nadie apuntado aún...</div>'; return; }
-    entries.sort((a,b) => (a[1].ts||0)-(b[1].ts||0));
-    list.innerHTML = entries.map(([key,p],i) =>
-      '<div class="player-item">' +
-        '<div class="player-num">'+(i+1)+'</div>' +
-        '<div class="player-avatar '+CLASS_CSS[p.cls]+'">'+CLASS_ICONS[p.cls]+'</div>' +
-        '<div class="player-name">'+escHtml(p.name)+'</div>' +
-        '<div class="player-class">'+p.cls+'</div>' +
-        '<button class="btn btn-danger" onclick="removePlayer(\''+escAttr(key)+'\')">✕</button>' +
-      '</div>'
-    ).join('');
-  }
-
   function renderTeams(t1,t2,bench) {
     document.getElementById('team1List').innerHTML = t1.map(tpHTML).join('');
     document.getElementById('team2List').innerHTML = t2.map(tpHTML).join('');
@@ -383,6 +532,9 @@
 
   function escHtml(s)  { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
   function escAttr(s)  { return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
+
+  // Exponer renderTeams para el módulo
+  window.renderTeams = renderTeams;
 
   document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('nameInput').addEventListener('keydown', e => {
