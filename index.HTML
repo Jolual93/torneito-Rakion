@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rakion — Amistoso</title>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700;900&family=Cinzel:wght@400;600&family=Crimson+Pro:ital,wght@0,300;0,400;1,300&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --gold: #c9a84c;
+    --gold-light: #e8cc7a;
+    --gold-dim: #7a6230;
+    --red: #c0392b;
+    --red-bright: #e74c3c;
+    --blue: #1a6fa0;
+    --blue-bright: #2980b9;
+    --bg: #0a0a0f;
+    --bg2: #10101a;
+    --bg3: #161622;
+    --panel: #12121e;
+    --border: rgba(201, 168, 76, 0.25);
+    --text: #e8dfc8;
+    --muted: #7a7060;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Crimson Pro', Georgia, serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Background stars */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      radial-gradient(1px 1px at 20% 30%, rgba(201,168,76,0.4) 0%, transparent 100%),
+      radial-gradient(1px 1px at 60% 70%, rgba(201,168,76,0.3) 0%, transparent 100%),
+      radial-gradient(1px 1px at 80% 20%, rgba(201,168,76,0.2) 0%, transparent 100%),
+      radial-gradient(1px 1px at 40% 80%, rgba(201,168,76,0.25) 0%, transparent 100%),
+      radial-gradient(1px 1px at 90% 50%, rgba(201,168,76,0.2) 0%, transparent 100%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Grid overlay */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: linear-gradient(rgba(201,168,76,0.03) 1px, transparent 1px),
+                      linear-gradient(90deg, rgba(201,168,76,0.03) 1px, transparent 1px);
+    background-size: 60px 60px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    position: relative;
+    z-index: 1;
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 32px 20px 60px;
+  }
+
+  /* Header */
+  header {
+    text-align: center;
+    margin-bottom: 40px;
+    animation: fadeDown 0.6s ease both;
+  }
+
+  .logo-line {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    margin-bottom: 4px;
+  }
+
+  .logo-line::before,
+  .logo-line::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(to right, transparent, var(--gold-dim));
+    max-width: 120px;
+  }
+  .logo-line::after { background: linear-gradient(to left, transparent, var(--gold-dim)); }
+
+  .brand {
+    font-family: 'Cinzel Decorative', serif;
+    font-size: clamp(28px, 6vw, 48px);
+    font-weight: 900;
+    color: var(--gold);
+    text-shadow: 0 0 40px rgba(201,168,76,0.4), 0 2px 4px rgba(0,0,0,0.8);
+    letter-spacing: 4px;
+  }
+
+  .subtitle {
+    font-family: 'Cinzel', serif;
+    font-size: 13px;
+    letter-spacing: 8px;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-top: 6px;
+  }
+
+  /* Panels */
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 28px;
+    margin-bottom: 24px;
+    position: relative;
+    animation: fadeUp 0.5s ease both;
+  }
+
+  .panel::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--gold-dim), transparent);
+    border-radius: 4px 4px 0 0;
+  }
+
+  .panel-title {
+    font-family: 'Cinzel', serif;
+    font-size: 12px;
+    letter-spacing: 5px;
+    text-transform: uppercase;
+    color: var(--gold-dim);
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .panel-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* Form */
+  .form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: 12px;
+    align-items: end;
+  }
+
+  @media (max-width: 560px) {
+    .form-row { grid-template-columns: 1fr; }
+  }
+
+  label {
+    font-family: 'Cinzel', serif;
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: var(--muted);
+    text-transform: uppercase;
+    display: block;
+    margin-bottom: 6px;
+  }
+
+  input[type="text"], select {
+    width: 100%;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text);
+    font-family: 'Crimson Pro', serif;
+    font-size: 16px;
+    padding: 10px 14px;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    appearance: none;
+    -webkit-appearance: none;
+  }
+
+  input[type="text"]:focus, select:focus {
+    border-color: var(--gold-dim);
+    box-shadow: 0 0 0 3px rgba(201,168,76,0.1);
+  }
+
+  select option { background: #1a1a2e; }
+
+  .btn {
+    font-family: 'Cinzel', serif;
+    font-size: 11px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    padding: 11px 22px;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+
+  .btn-primary {
+    background: linear-gradient(135deg, var(--gold-dim), var(--gold));
+    color: #0a0a0f;
+    font-weight: 700;
+  }
+  .btn-primary:hover { filter: brightness(1.15); transform: translateY(-1px); }
+  .btn-primary:active { transform: translateY(0); }
+
+  .btn-danger {
+    background: transparent;
+    border: 1px solid rgba(192,57,43,0.4);
+    color: #e57368;
+    font-size: 10px;
+    padding: 4px 10px;
+    letter-spacing: 1px;
+  }
+  .btn-danger:hover { background: rgba(192,57,43,0.15); }
+
+  .btn-shuffle {
+    background: linear-gradient(135deg, #1a3a6a, #1a6fa0);
+    color: #c8e4f8;
+    border: 1px solid rgba(26,111,160,0.5);
+    font-size: 13px;
+    letter-spacing: 2px;
+    padding: 13px 32px;
+  }
+  .btn-shuffle:hover { filter: brightness(1.2); transform: translateY(-1px); }
+  .btn-shuffle:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  .btn-reset {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 10px;
+    padding: 8px 16px;
+  }
+  .btn-reset:hover { border-color: var(--gold-dim); color: var(--gold-dim); }
+
+  /* Player list */
+  .player-count {
+    font-family: 'Cinzel', serif;
+    font-size: 11px;
+    letter-spacing: 3px;
+    color: var(--muted);
+    margin-bottom: 14px;
+  }
+
+  .player-count span {
+    color: var(--gold);
+    font-size: 18px;
+    font-weight: 600;
+  }
+
+  .players-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 320px;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+
+  .players-grid::-webkit-scrollbar { width: 4px; }
+  .players-grid::-webkit-scrollbar-track { background: transparent; }
+  .players-grid::-webkit-scrollbar-thumb { background: var(--gold-dim); border-radius: 2px; }
+
+  .player-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(201,168,76,0.1);
+    border-radius: 3px;
+    padding: 9px 14px;
+    animation: slideIn 0.25s ease both;
+  }
+
+  .player-num {
+    font-family: 'Cinzel', serif;
+    font-size: 10px;
+    color: var(--gold-dim);
+    width: 20px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  .player-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    flex-shrink: 0;
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+
+  .player-name {
+    flex: 1;
+    font-size: 17px;
+    font-weight: 400;
+  }
+
+  .player-class {
+    font-family: 'Cinzel', serif;
+    font-size: 9px;
+    letter-spacing: 2px;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+
+  .empty-msg {
+    text-align: center;
+    padding: 32px 0;
+    color: var(--muted);
+    font-style: italic;
+    font-size: 15px;
+    opacity: 0.7;
+  }
+
+  .warning {
+    background: rgba(201,168,76,0.08);
+    border: 1px solid rgba(201,168,76,0.2);
+    border-radius: 3px;
+    padding: 10px 14px;
+    font-size: 14px;
+    color: var(--gold-dim);
+    margin-bottom: 14px;
+    font-style: italic;
+    display: none;
+  }
+
+  /* Shuffle section */
+  .shuffle-controls {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+
+  /* Teams display */
+  .teams-container {
+    display: none;
+    animation: fadeUp 0.4s ease both;
+    margin-top: 24px;
+  }
+
+  .vs-row {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 16px;
+    align-items: stretch;
+  }
+
+  @media (max-width: 560px) {
+    .vs-row { grid-template-columns: 1fr; }
+    .vs-badge { display: none; }
+  }
+
+  .team-panel {
+    border-radius: 4px;
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .team1 {
+    background: linear-gradient(135deg, rgba(192,57,43,0.12), rgba(192,57,43,0.04));
+    border: 1px solid rgba(192,57,43,0.35);
+  }
+  .team1::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, var(--red), transparent);
+  }
+
+  .team2 {
+    background: linear-gradient(135deg, rgba(26,111,160,0.12), rgba(26,111,160,0.04));
+    border: 1px solid rgba(26,111,160,0.35);
+  }
+  .team2::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, transparent, var(--blue));
+  }
+
+  .team-label {
+    font-family: 'Cinzel', serif;
+    font-size: 10px;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+  .team1 .team-label { color: #e57368; }
+  .team2 .team-label { color: #5daee8; }
+
+  .team-player {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+  .team-player:last-child { border-bottom: none; }
+
+  .team-player-name {
+    flex: 1;
+    font-size: 17px;
+  }
+
+  .team-player-class {
+    font-family: 'Cinzel', serif;
+    font-size: 9px;
+    letter-spacing: 1px;
+    color: var(--muted);
+  }
+
+  .vs-badge {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Cinzel Decorative', serif;
+    font-size: 22px;
+    font-weight: 900;
+    color: var(--gold);
+    text-shadow: 0 0 20px rgba(201,168,76,0.5);
+    letter-spacing: 2px;
+  }
+
+  .bench-section {
+    margin-top: 16px;
+    padding: 14px;
+    background: rgba(255,255,255,0.02);
+    border: 1px dashed rgba(255,255,255,0.1);
+    border-radius: 3px;
+  }
+
+  .bench-title {
+    font-family: 'Cinzel', serif;
+    font-size: 9px;
+    letter-spacing: 3px;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+
+  .bench-players {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .bench-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 4px 10px 4px 6px;
+    font-size: 14px;
+  }
+
+  .bench-chip-class {
+    font-family: 'Cinzel', serif;
+    font-size: 8px;
+    letter-spacing: 1px;
+    color: var(--muted);
+  }
+
+  /* Error */
+  .error-msg {
+    color: #e57368;
+    font-size: 13px;
+    font-style: italic;
+    margin-top: 8px;
+    min-height: 20px;
+  }
+
+  /* Animations */
+  @keyframes fadeDown {
+    from { opacity: 0; transform: translateY(-16px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateX(-8px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+
+  /* Character color coding */
+  .cls-mago     { background: rgba(140,60,200,0.25); }
+  .cls-blacksmith { background: rgba(160,100,40,0.3); }
+  .cls-ninja    { background: rgba(40,160,100,0.25); }
+  .cls-guerrero { background: rgba(200,60,60,0.25); }
+  .cls-arquera  { background: rgba(60,120,200,0.25); }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="logo-line">
+      <div class="brand">RAKION</div>
+    </div>
+    <div class="subtitle">Amistoso — Inscripción</div>
+  </header>
+
+  <!-- Formulario -->
+  <div class="panel" style="animation-delay:0.1s">
+    <div class="panel-title">Inscripción</div>
+    <div class="form-row">
+      <div>
+        <label>Tu nombre</label>
+        <input type="text" id="nameInput" placeholder="Ej: xXDarkBladexX" maxlength="24">
+      </div>
+      <div>
+        <label>Personaje</label>
+        <select id="classSelect">
+          <option value="">— Elige personaje —</option>
+          <option value="Mago">🔮 Mago</option>
+          <option value="Blacksmith">🔨 Blacksmith</option>
+          <option value="Ninja">🌿 Ninja</option>
+          <option value="Guerrero">⚔️ Guerrero</option>
+          <option value="Arquera">🏹 Arquera</option>
+        </select>
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <button class="btn btn-primary" onclick="addPlayer()">Apuntarme</button>
+      </div>
+    </div>
+    <div class="error-msg" id="errorMsg"></div>
+  </div>
+
+  <!-- Lista de jugadores -->
+  <div class="panel" style="animation-delay:0.2s">
+    <div class="panel-title">Jugadores inscritos</div>
+    <div class="player-count">Total: <span id="playerCount">0</span> jugadores</div>
+    <div class="warning" id="warningMsg"></div>
+    <div class="players-grid" id="playersList">
+      <div class="empty-msg">Nadie apuntado aún... ¡sé el primero!</div>
+    </div>
+  </div>
+
+  <!-- Sorteo -->
+  <div class="panel" style="animation-delay:0.3s">
+    <div class="panel-title">Sorteo</div>
+    <div class="shuffle-controls">
+      <button class="btn btn-shuffle" id="shuffleBtn" onclick="shuffle()" disabled>
+        🎲 Chocolatear equipos
+      </button>
+      <button class="btn btn-reset" onclick="resetAll()">Reiniciar todo</button>
+    </div>
+  </div>
+
+  <!-- Equipos -->
+  <div class="teams-container" id="teamsContainer">
+    <div class="panel">
+      <div class="panel-title">Resultado del sorteo</div>
+      <div class="vs-row">
+        <div class="team-panel team1">
+          <div class="team-label">⚔ Equipo 1</div>
+          <div id="team1List"></div>
+        </div>
+        <div class="vs-badge">VS</div>
+        <div class="team-panel team2">
+          <div class="team-label">🛡 Equipo 2</div>
+          <div id="team2List"></div>
+        </div>
+      </div>
+      <div class="bench-section" id="benchSection" style="display:none">
+        <div class="bench-title">🪑 En la banca (no entran en esta ronda)</div>
+        <div class="bench-players" id="benchList"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const STORAGE_KEY = 'rakion_amistoso_players_v1';
+const CLASS_ICONS = {
+  'Mago': '🔮',
+  'Blacksmith': '🔨',
+  'Ninja': '🌿',
+  'Guerrero': '⚔️',
+  'Arquera': '🏹',
+};
+const CLASS_CSS = {
+  'Mago': 'cls-mago',
+  'Blacksmith': 'cls-blacksmith',
+  'Ninja': 'cls-ninja',
+  'Guerrero': 'cls-guerrero',
+  'Arquera': 'cls-arquera',
+};
+
+let players = [];
+
+function loadPlayers() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) players = JSON.parse(raw);
+  } catch(e) { players = []; }
+  render();
+}
+
+function savePlayers() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(players));
+}
+
+function addPlayer() {
+  const name = document.getElementById('nameInput').value.trim();
+  const cls = document.getElementById('classSelect').value;
+  const err = document.getElementById('errorMsg');
+
+  if (!name) { err.textContent = 'Escribe tu nombre primero.'; return; }
+  if (!cls)  { err.textContent = 'Elige un personaje.'; return; }
+  if (players.some(p => p.name.toLowerCase() === name.toLowerCase())) {
+    err.textContent = 'Ese nombre ya está apuntado.'; return;
+  }
+
+  err.textContent = '';
+  players.push({ name, cls, id: Date.now() });
+  savePlayers();
+  document.getElementById('nameInput').value = '';
+  document.getElementById('classSelect').value = '';
+  render();
+  // hide teams on new signup
+  document.getElementById('teamsContainer').style.display = 'none';
+}
+
+function removePlayer(id) {
+  players = players.filter(p => p.id !== id);
+  savePlayers();
+  render();
+  document.getElementById('teamsContainer').style.display = 'none';
+}
+
+function render() {
+  const list = document.getElementById('playersList');
+  const count = document.getElementById('playerCount');
+  const shuffleBtn = document.getElementById('shuffleBtn');
+  const warning = document.getElementById('warningMsg');
+
+  count.textContent = players.length;
+  shuffleBtn.disabled = players.length < 8;
+
+  if (players.length > 0 && players.length < 8) {
+    warning.style.display = 'block';
+    warning.textContent = `Faltan ${8 - players.length} jugador(es) más para poder hacer el sorteo (mínimo 8).`;
+  } else {
+    warning.style.display = 'none';
+  }
+
+  if (players.length === 0) {
+    list.innerHTML = '<div class="empty-msg">Nadie apuntado aún... ¡sé el primero!</div>';
+    return;
+  }
+
+  list.innerHTML = players.map((p, i) => `
+    <div class="player-item">
+      <div class="player-num">${i + 1}</div>
+      <div class="player-avatar ${CLASS_CSS[p.cls]}">${CLASS_ICONS[p.cls]}</div>
+      <div class="player-name">${escHtml(p.name)}</div>
+      <div class="player-class">${p.cls}</div>
+      <button class="btn btn-danger" onclick="removePlayer(${p.id})">✕</button>
+    </div>
+  `).join('');
+}
+
+function shuffle() {
+  if (players.length < 8) return;
+
+  // Shuffle array (Fisher-Yates)
+  const arr = [...players];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+
+  const team1 = arr.slice(0, 4);
+  const team2 = arr.slice(4, 8);
+  const bench = arr.slice(8);
+
+  renderTeams(team1, team2, bench);
+  document.getElementById('teamsContainer').style.display = 'block';
+  document.getElementById('teamsContainer').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderTeams(t1, t2, bench) {
+  document.getElementById('team1List').innerHTML = t1.map(p => teamPlayerHTML(p)).join('');
+  document.getElementById('team2List').innerHTML = t2.map(p => teamPlayerHTML(p)).join('');
+
+  const benchSection = document.getElementById('benchSection');
+  const benchList = document.getElementById('benchList');
+  if (bench.length > 0) {
+    benchSection.style.display = 'block';
+    benchList.innerHTML = bench.map(p => `
+      <div class="bench-chip">
+        <span>${CLASS_ICONS[p.cls]}</span>
+        <span>${escHtml(p.name)}</span>
+        <span class="bench-chip-class">${p.cls}</span>
+      </div>
+    `).join('');
+  } else {
+    benchSection.style.display = 'none';
+  }
+}
+
+function teamPlayerHTML(p) {
+  return `
+    <div class="team-player">
+      <span style="font-size:18px">${CLASS_ICONS[p.cls]}</span>
+      <span class="team-player-name">${escHtml(p.name)}</span>
+      <span class="team-player-class">${p.cls}</span>
+    </div>
+  `;
+}
+
+function resetAll() {
+  if (!confirm('¿Borrar a todos los jugadores y empezar de cero?')) return;
+  players = [];
+  savePlayers();
+  render();
+  document.getElementById('teamsContainer').style.display = 'none';
+  document.getElementById('errorMsg').textContent = '';
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Enter key to submit
+document.addEventListener('DOMContentLoaded', () => {
+  loadPlayers();
+  document.getElementById('nameInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') addPlayer();
+  });
+});
+</script>
+</body>
+</html>
