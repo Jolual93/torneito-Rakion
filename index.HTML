@@ -34,26 +34,20 @@
     try {
       const r = await fetch('https://api.ipify.org?format=json');
       const d = await r.json();
-      return d.ip.replace(/\./g, '_').replace(/:/g, '_');
+      return d.ip.replace(/\./g,'_').replace(/:/g,'_');
     } catch {
       return btoa(navigator.userAgent + navigator.language + screen.width)
-        .replace(/[^a-zA-Z0-9]/g, '').slice(0, 32);
+        .replace(/[^a-zA-Z0-9]/g,'').slice(0,32);
     }
   }
 
   let myIP        = null;
   let alreadyIn   = false;
   let playersList = {};
-  let isAdmin     = false;
-
-  // Verificar si ya era admin en esta sesión
-  if (sessionStorage.getItem('rakion_admin') === ADMIN_PASSWORD) {
-    isAdmin = true;
-  }
+  let isAdmin     = sessionStorage.getItem('rakion_admin') === ADMIN_PASSWORD;
 
   window.addEventListener('load', async () => {
     myIP = await getMyIP();
-
     updateAdminUI();
 
     const ipSnap = await get(ref(db, 'registered_ips/' + myIP));
@@ -70,17 +64,17 @@
     onValue(sorteoRef, snap => {
       const s = snap.val();
       if (s && s.team1) {
-        renderTeams(s.team1, s.team2, s.bench || []);
+        renderTeams(s.team1, s.team2, s.bench || [], s.warnings || []);
         document.getElementById('sorteoTs').textContent =
           'Sorteado: ' + new Date(s.ts).toLocaleTimeString('es-PE');
         document.getElementById('teamsContainer').style.display = 'block';
+        document.getElementById('teamsContainer').scrollIntoView({behavior:'smooth',block:'start'});
       } else {
         document.getElementById('teamsContainer').style.display = 'none';
       }
     });
   });
 
-  // Login admin
   window.tryAdminLogin = function() {
     const input = document.getElementById('adminPassInput').value;
     const err   = document.getElementById('adminErr');
@@ -108,33 +102,29 @@
   };
 
   function updateAdminUI() {
-    const adminPanel   = document.getElementById('adminPanel');
-    const adminHint    = document.getElementById('adminHint');
-    const adminBadge   = document.getElementById('adminBadge');
+    document.getElementById('adminPanel').style.display  = isAdmin ? 'block' : 'none';
+    document.getElementById('adminHint').style.display   = isAdmin ? 'none'  : 'block';
+    document.getElementById('adminBadge').style.display  = isAdmin ? 'inline-flex' : 'none';
+    refreshShuffleBtn();
+  }
 
-    if (isAdmin) {
-      adminPanel.style.display  = 'block';
-      adminHint.style.display   = 'none';
-      adminBadge.style.display  = 'inline-flex';
-    } else {
-      adminPanel.style.display  = 'none';
-      adminHint.style.display   = 'block';
-      adminBadge.style.display  = 'none';
-    }
-    // actualizar botón sorteo también
-    const arr = Object.values(playersList || {});
-    const shuffleBtn = document.getElementById('shuffleBtn');
-    if (shuffleBtn) shuffleBtn.disabled = !isAdmin || arr.length < 8;
+  function refreshShuffleBtn() {
+    const btn = document.getElementById('shuffleBtn');
+    if (btn) btn.disabled = !isAdmin || Object.keys(playersList).length < 8;
   }
 
   window.addPlayer = async function() {
     if (alreadyIn) return;
-    const name = document.getElementById('nameInput').value.trim();
-    const cls  = document.getElementById('classSelect').value;
-    const err  = document.getElementById('errorMsg');
+    const name  = document.getElementById('nameInput').value.trim();
+    const cls   = document.getElementById('classSelect').value;
+    const lvlRaw= parseInt(document.getElementById('levelInput').value);
+    const err   = document.getElementById('errorMsg');
 
-    if (!name) { err.textContent = 'Escribe tu nombre primero.'; return; }
-    if (!cls)  { err.textContent = 'Elige un personaje.'; return; }
+    if (!name)              { err.textContent = 'Escribe tu nombre.'; return; }
+    if (!cls)               { err.textContent = 'Elige un personaje.'; return; }
+    if (isNaN(lvlRaw) || lvlRaw < 11 || lvlRaw > 99) {
+      err.textContent = 'El nivel debe estar entre 11 y 99.'; return;
+    }
 
     const existing = Object.values(playersList);
     if (existing.some(p => p.name.toLowerCase() === name.toLowerCase())) {
@@ -143,7 +133,7 @@
 
     err.textContent = '';
     const newRef = push(playersRef);
-    await set(newRef, { name, cls, ts: Date.now() });
+    await set(newRef, { name, cls, lvl: lvlRaw, ts: Date.now() });
     await set(ref(db, 'registered_ips/' + myIP), { name, ts: Date.now() });
     await set(sorteoRef, null);
     alreadyIn = true;
@@ -158,29 +148,121 @@
     const ipsSnap = await get(ipsRef);
     if (ipsSnap.exists()) {
       for (const [ip, val] of Object.entries(ipsSnap.val())) {
-        if (val.name === p.name) {
-          await remove(ref(db, 'registered_ips/' + ip));
-          break;
-        }
+        if (val.name === p.name) { await remove(ref(db, 'registered_ips/' + ip)); break; }
       }
     }
     await set(sorteoRef, null);
   };
 
+  // ─────────────────────────────────────────────
+  //  ALGORITMO DE BALANCE
+  //  Prioridades:
+  //  1. No repetir personaje en el mismo equipo
+  //  2. Equilibrar suma de niveles
+  //  3. Avisar si no se pudo cumplir alguna regla
+  // ─────────────────────────────────────────────
+  function balancedShuffle(players) {
+    // Trabajamos solo con los primeros 8 (el resto va a banca)
+    const pool  = [...players];
+    // Shuffle inicial aleatorio para romper orden de inscripción
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+
+    const playing = pool.slice(0, 8);
+    const bench   = pool.slice(8);
+    const warnings = [];
+
+    // Intentamos encontrar la mejor partición 4v4
+    // Generamos todas las combinaciones C(8,4) = 70 posibles
+    const combos = combinations(playing, 4);
+    let bestSplit = null;
+    let bestScore = Infinity;
+
+    for (const t1 of combos) {
+      const t2 = playing.filter(p => !t1.includes(p));
+
+      // Penalización por repetir personaje en el mismo equipo
+      const dupPenT1 = duplicateClassPenalty(t1);
+      const dupPenT2 = duplicateClassPenalty(t2);
+
+      // Diferencia de niveles
+      const sum1 = t1.reduce((a, p) => a + p.lvl, 0);
+      const sum2 = t2.reduce((a, p) => a + p.lvl, 0);
+      const lvlDiff = Math.abs(sum1 - sum2);
+
+      // Score: penalizamos fuerte los duplicados, luego la diferencia de nivel
+      const score = (dupPenT1 + dupPenT2) * 1000 + lvlDiff;
+
+      if (score < bestScore) {
+        bestScore = score;
+        bestSplit = { t1, t2, sum1, sum2, dupPenT1, dupPenT2, lvlDiff };
+      }
+    }
+
+    const { t1, t2, sum1, sum2, dupPenT1, dupPenT2, lvlDiff } = bestSplit;
+
+    // Generar advertencias
+    if (dupPenT1 > 0 || dupPenT2 > 0) {
+      warnings.push('⚠️ No fue posible evitar todos los personajes repetidos en un equipo.');
+    }
+    if (lvlDiff > 20) {
+      warnings.push('⚠️ Diferencia de nivel entre equipos: ' + lvlDiff + ' pts. El balance es aproximado.');
+    }
+
+    return {
+      team1: t1.map(p => ({ name: p.name, cls: p.cls, lvl: p.lvl })),
+      team2: t2.map(p => ({ name: p.name, cls: p.cls, lvl: p.lvl })),
+      bench: bench.map(p => ({ name: p.name, cls: p.cls, lvl: p.lvl })),
+      sum1, sum2,
+      warnings
+    };
+  }
+
+  function duplicateClassPenalty(team) {
+    const counts = {};
+    for (const p of team) counts[p.cls] = (counts[p.cls] || 0) + 1;
+    return Object.values(counts).reduce((acc, c) => acc + Math.max(0, c - 1), 0);
+  }
+
+  // Genera todas las combinaciones de tamaño k del array arr
+  function combinations(arr, k) {
+    const result = [];
+    function helper(start, current) {
+      if (current.length === k) { result.push([...current]); return; }
+      for (let i = start; i < arr.length; i++) {
+        current.push(arr[i]);
+        helper(i + 1, current);
+        current.pop();
+      }
+    }
+    helper(0, []);
+    return result;
+  }
+
   window.shuffle = async function() {
     if (!isAdmin) return;
     const arr = Object.entries(playersList).map(([k, v]) => ({ key: k, ...v }));
     if (arr.length < 8) return;
-    for (let i = arr.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [arr[i], arr[j]] = [arr[j], arr[i]];
-    }
-    await set(sorteoRef, {
-      team1: arr.slice(0, 4).map(p => ({ name: p.name, cls: p.cls })),
-      team2: arr.slice(4, 8).map(p => ({ name: p.name, cls: p.cls })),
-      bench: arr.slice(8).map(p => ({ name: p.name, cls: p.cls })),
-      ts: Date.now()
-    });
+
+    // Animar botón
+    const btn = document.getElementById('shuffleBtn');
+    btn.textContent = '⏳ Sorteando...';
+    btn.disabled = true;
+
+    // Pequeño delay para efecto dramático
+    await new Promise(r => setTimeout(r, 600));
+
+    const result = balancedShuffle(arr);
+
+    await set(sorteoRef, { ...result, ts: Date.now() });
+
+    btn.textContent = '🎲 Chocolatear equipos';
+    refreshShuffleBtn();
+
+    // Efecto de sonido al sortear
+    playDrum();
   };
 
   window.resetAll = async function() {
@@ -195,17 +277,10 @@
     document.getElementById('errorMsg').textContent = '';
   };
 
-  // Exponer renderPlayers al scope global para que updateAdminUI pueda leer playersList
-  window._getPlayersList = () => playersList;
-  window._isAdmin = () => isAdmin;
-
-  // Parchear renderPlayers para que actualice el botón shuffle
   function renderPlayers(obj) {
     const entries = Object.entries(obj || {});
     document.getElementById('playerCount').textContent = entries.length;
-
-    const shuffleBtn = document.getElementById('shuffleBtn');
-    if (shuffleBtn) shuffleBtn.disabled = !isAdmin || entries.length < 8;
+    refreshShuffleBtn();
 
     const warn = document.getElementById('warningMsg');
     if (entries.length > 0 && entries.length < 8) {
@@ -220,14 +295,16 @@
       '<div class="player-item">' +
         '<div class="player-num">'+(i+1)+'</div>' +
         '<div class="player-avatar '+CLASS_CSS[p.cls]+'">'+CLASS_ICONS[p.cls]+'</div>' +
-        '<div class="player-name">'+escHtml(p.name)+'</div>' +
-        '<div class="player-class">'+p.cls+'</div>' +
+        '<div class="player-info">' +
+          '<div class="player-name">'+escHtml(p.name)+'</div>' +
+          '<div class="player-meta"><span class="player-class">'+p.cls+'</span><span class="player-lvl">Nv. '+p.lvl+'</span></div>' +
+        '</div>' +
         (isAdmin ? '<button class="btn btn-danger" onclick="removePlayer(\''+escAttr(key)+'\')">✕</button>' : '') +
       '</div>'
     ).join('');
   }
 
-  window.__renderPlayers = renderPlayers;
+  window._renderPlayers = renderPlayers;
 </script>
 
 <style>
@@ -239,70 +316,64 @@
   }
   * { margin:0; padding:0; box-sizing:border-box; }
   body { background:#0a0a0f; color:var(--text); font-family:'Crimson Pro',Georgia,serif; min-height:100vh; overflow-x:hidden; }
-  body::before { content:''; position:fixed; inset:0; background-image: radial-gradient(1px 1px at 20% 30%,rgba(201,168,76,0.4) 0%,transparent 100%), radial-gradient(1px 1px at 60% 70%,rgba(201,168,76,0.3) 0%,transparent 100%), radial-gradient(1px 1px at 80% 20%,rgba(201,168,76,0.2) 0%,transparent 100%); pointer-events:none; z-index:0; }
+  body::before { content:''; position:fixed; inset:0; background-image: radial-gradient(1px 1px at 15% 25%,rgba(201,168,76,0.5) 0%,transparent 100%), radial-gradient(1px 1px at 65% 70%,rgba(201,168,76,0.3) 0%,transparent 100%), radial-gradient(1px 1px at 85% 15%,rgba(201,168,76,0.25) 0%,transparent 100%), radial-gradient(1px 1px at 40% 85%,rgba(201,168,76,0.2) 0%,transparent 100%); pointer-events:none; z-index:0; }
   body::after { content:''; position:fixed; inset:0; background-image: linear-gradient(rgba(201,168,76,0.03) 1px,transparent 1px), linear-gradient(90deg,rgba(201,168,76,0.03) 1px,transparent 1px); background-size:60px 60px; pointer-events:none; z-index:0; }
 
-  .container { position:relative; z-index:1; max-width:860px; margin:0 auto; padding:32px 20px 60px; }
+  .container { position:relative; z-index:1; max-width:880px; margin:0 auto; padding:32px 20px 60px; }
 
+  /* ── Header ── */
   header { text-align:center; margin-bottom:40px; animation:fadeDown 0.6s ease both; }
   .logo-line { display:flex; align-items:center; justify-content:center; gap:16px; margin-bottom:4px; }
   .logo-line::before,.logo-line::after { content:''; flex:1; height:1px; max-width:120px; background:linear-gradient(to right,transparent,var(--gold-dim)); }
   .logo-line::after { background:linear-gradient(to left,transparent,var(--gold-dim)); }
-  .brand { font-family:'Cinzel Decorative',serif; font-size:clamp(28px,6vw,48px); font-weight:900; color:var(--gold); letter-spacing:4px; text-shadow:0 0 40px rgba(201,168,76,0.4),0 2px 4px rgba(0,0,0,0.8); }
+  .brand { font-family:'Cinzel Decorative',serif; font-size:clamp(28px,6vw,52px); font-weight:900; color:var(--gold); letter-spacing:4px; text-shadow:0 0 40px rgba(201,168,76,0.5),0 2px 4px rgba(0,0,0,0.8); }
   .subtitle { font-family:'Cinzel',serif; font-size:13px; letter-spacing:8px; color:var(--muted); text-transform:uppercase; margin-top:6px; }
 
-  /* Admin badge en el header */
-  .header-admin { display:flex; align-items:center; justify-content:center; gap:10px; margin-top:12px; }
-  .admin-badge {
-    display:none; align-items:center; gap:6px;
-    background:rgba(201,168,76,0.12);
-    border:1px solid rgba(201,168,76,0.35);
-    border-radius:20px; padding:4px 12px 4px 8px;
-    font-family:'Cinzel',serif; font-size:9px;
-    letter-spacing:3px; color:var(--gold);
-    text-transform:uppercase;
+  /* ── Music player ── */
+  .music-bar {
+    display:flex; align-items:center; justify-content:center; gap:12px;
+    margin-top:14px;
+    background:rgba(201,168,76,0.05);
+    border:1px solid rgba(201,168,76,0.15);
+    border-radius:30px; padding:8px 18px;
+    width:fit-content; margin-inline:auto;
   }
-  .admin-badge::before { content:'★'; font-size:11px; }
-  .admin-logout {
-    background:transparent; border:none; cursor:pointer;
-    font-family:'Cinzel',serif; font-size:8px;
-    letter-spacing:2px; color:var(--muted);
-    text-transform:uppercase; padding:0 0 0 6px;
-    border-left:1px solid rgba(201,168,76,0.2);
-    margin-left:4px;
+  .music-btn {
+    background:none; border:none; cursor:pointer;
+    color:var(--gold); font-size:18px; line-height:1;
+    width:32px; height:32px; display:flex; align-items:center; justify-content:center;
+    border-radius:50%; transition:background 0.2s;
   }
-  .admin-logout:hover { color:#e57368; }
+  .music-btn:hover { background:rgba(201,168,76,0.15); }
+  .music-info { font-family:'Cinzel',serif; font-size:9px; letter-spacing:3px; color:var(--muted); text-transform:uppercase; }
+  .music-vol { width:70px; accent-color:var(--gold); cursor:pointer; }
+  .music-playing { color:#4caf76 !important; }
+  .equalizer { display:none; align-items:flex-end; gap:2px; height:14px; }
+  .equalizer.active { display:flex; }
+  .equalizer span { width:3px; background:var(--gold); border-radius:1px; animation:eq 0.6s ease-in-out infinite alternate; }
+  .equalizer span:nth-child(1){ height:6px; animation-delay:0s; }
+  .equalizer span:nth-child(2){ height:12px; animation-delay:0.15s; }
+  .equalizer span:nth-child(3){ height:8px; animation-delay:0.3s; }
+  .equalizer span:nth-child(4){ height:14px; animation-delay:0.1s; }
+  .equalizer span:nth-child(5){ height:5px; animation-delay:0.25s; }
+  @keyframes eq { from{transform:scaleY(0.3)} to{transform:scaleY(1)} }
 
-  /* Admin hint (para usuarios normales) */
-  .admin-hint {
-    text-align:center; margin-top:10px;
-    font-family:'Cinzel',serif; font-size:9px;
-    letter-spacing:2px; color:var(--muted);
-  }
+  /* ── Admin ── */
+  .header-admin { display:flex; align-items:center; justify-content:center; gap:10px; margin-top:10px; }
+  .admin-badge { display:none; align-items:center; gap:6px; background:rgba(201,168,76,0.12); border:1px solid rgba(201,168,76,0.35); border-radius:20px; padding:4px 12px 4px 8px; font-family:'Cinzel',serif; font-size:9px; letter-spacing:3px; color:var(--gold); text-transform:uppercase; }
+  .admin-badge::before { content:'★'; font-size:11px; }
+  .admin-logout { background:transparent; border:none; cursor:pointer; font-family:'Cinzel',serif; font-size:8px; letter-spacing:2px; color:var(--muted); text-transform:uppercase; padding:0 0 0 8px; border-left:1px solid rgba(201,168,76,0.2); margin-left:4px; }
+  .admin-logout:hover { color:#e57368; }
+  .admin-hint { text-align:center; margin-top:8px; font-family:'Cinzel',serif; font-size:9px; letter-spacing:2px; color:var(--muted); }
   .admin-hint a { color:var(--gold-dim); cursor:pointer; text-decoration:none; border-bottom:1px dashed var(--gold-dim); }
   .admin-hint a:hover { color:var(--gold); }
-
-  /* Login box admin */
-  .admin-login-box {
-    display:none;
-    background:rgba(201,168,76,0.05);
-    border:1px solid rgba(201,168,76,0.2);
-    border-radius:4px; padding:16px 20px;
-    margin-top:12px;
-    animation:fadeUp 0.2s ease both;
-  }
+  .admin-login-box { display:none; background:rgba(201,168,76,0.05); border:1px solid rgba(201,168,76,0.2); border-radius:4px; padding:16px 20px; margin-top:12px; animation:fadeUp 0.2s ease both; max-width:340px; margin-inline:auto; }
   .admin-login-row { display:flex; gap:10px; align-items:center; }
-  .admin-pass-input {
-    flex:1; background:rgba(255,255,255,0.04);
-    border:1px solid var(--border); border-radius:3px;
-    color:var(--text); font-family:'Crimson Pro',serif;
-    font-size:16px; padding:8px 12px; outline:none;
-    letter-spacing:4px;
-    transition:border-color 0.2s;
-  }
+  .admin-pass-input { flex:1; background:rgba(255,255,255,0.04); border:1px solid var(--border); border-radius:3px; color:var(--text); font-family:'Crimson Pro',serif; font-size:16px; padding:8px 12px; outline:none; letter-spacing:4px; transition:border-color 0.2s; }
   .admin-pass-input:focus { border-color:var(--gold-dim); }
   .admin-err { color:#e57368; font-size:12px; font-style:italic; margin-top:6px; min-height:16px; }
 
+  /* ── Panel ── */
   .panel { background:var(--panel); border:1px solid var(--border); border-radius:4px; padding:28px; margin-bottom:24px; position:relative; animation:fadeUp 0.5s ease both; }
   .panel::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:linear-gradient(90deg,transparent,var(--gold-dim),transparent); border-radius:4px 4px 0 0; }
   .panel-title { font-family:'Cinzel',serif; font-size:12px; letter-spacing:5px; text-transform:uppercase; color:var(--gold-dim); margin-bottom:20px; display:flex; align-items:center; gap:10px; }
@@ -310,18 +381,24 @@
 
   .already-in { display:none; background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.3); border-radius:3px; padding:14px 18px; font-size:15px; color:var(--gold-light); font-style:italic; text-align:center; }
 
-  .form-row { display:grid; grid-template-columns:1fr 1fr auto; gap:12px; align-items:end; }
-  @media(max-width:560px){ .form-row{grid-template-columns:1fr;} }
+  /* ── Formulario ── */
+  .form-row { display:grid; grid-template-columns:1.4fr 1fr 0.6fr auto; gap:12px; align-items:end; }
+  @media(max-width:620px){ .form-row{grid-template-columns:1fr 1fr; } .form-row .full{grid-column:1/-1;} }
+  @media(max-width:400px){ .form-row{grid-template-columns:1fr;} }
 
   label { font-family:'Cinzel',serif; font-size:10px; letter-spacing:3px; color:var(--muted); text-transform:uppercase; display:block; margin-bottom:6px; }
-  input[type="text"],select { width:100%; background:rgba(255,255,255,0.04); border:1px solid var(--border); border-radius:3px; color:var(--text); font-family:'Crimson Pro',serif; font-size:16px; padding:10px 14px; outline:none; transition:border-color 0.2s,box-shadow 0.2s; appearance:none; -webkit-appearance:none; }
-  input[type="text"]:focus,select:focus { border-color:var(--gold-dim); box-shadow:0 0 0 3px rgba(201,168,76,0.1); }
+  input[type="text"],input[type="number"],select { width:100%; background:rgba(255,255,255,0.04); border:1px solid var(--border); border-radius:3px; color:var(--text); font-family:'Crimson Pro',serif; font-size:16px; padding:10px 14px; outline:none; transition:border-color 0.2s,box-shadow 0.2s; appearance:none; -webkit-appearance:none; }
+  input[type="number"] { -moz-appearance:textfield; }
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button { -webkit-appearance:none; }
+  input:focus,select:focus { border-color:var(--gold-dim); box-shadow:0 0 0 3px rgba(201,168,76,0.1); }
   select option { background:#1a1a2e; }
 
+  /* ── Botones ── */
   .btn { font-family:'Cinzel',serif; font-size:11px; letter-spacing:3px; text-transform:uppercase; border:none; border-radius:3px; cursor:pointer; padding:11px 22px; transition:all 0.2s; white-space:nowrap; }
   .btn-primary { background:linear-gradient(135deg,var(--gold-dim),var(--gold)); color:#0a0a0f; font-weight:700; }
   .btn-primary:hover { filter:brightness(1.15); transform:translateY(-1px); }
-  .btn-sm { padding:8px 16px; font-size:10px; }
+  .btn-sm { padding:8px 14px; font-size:10px; }
   .btn-danger { background:transparent; border:1px solid rgba(192,57,43,0.4); color:#e57368; font-size:10px; padding:4px 10px; letter-spacing:1px; }
   .btn-danger:hover { background:rgba(192,57,43,0.15); }
   .btn-shuffle { background:linear-gradient(135deg,#1a3a6a,#1a6fa0); color:#c8e4f8; border:1px solid rgba(26,111,160,0.5); font-size:13px; letter-spacing:2px; padding:13px 32px; }
@@ -330,40 +407,37 @@
   .btn-reset { background:transparent; border:1px solid var(--border); color:var(--muted); font-size:10px; padding:8px 16px; }
   .btn-reset:hover { border-color:var(--gold-dim); color:var(--gold-dim); }
 
-  /* Panel admin (solo visible si eres admin) */
-  #adminPanel { display:none; }
-  .admin-panel-inner {
-    background:rgba(201,168,76,0.04);
-    border:1px solid rgba(201,168,76,0.15);
-    border-radius:3px; padding:16px 18px;
-  }
-  .admin-label {
-    font-family:'Cinzel',serif; font-size:9px;
-    letter-spacing:4px; color:var(--gold-dim);
-    text-transform:uppercase; margin-bottom:12px;
-    display:flex; align-items:center; gap:8px;
-  }
-  .admin-label::before { content:'★'; }
-  .shuffle-controls { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
-
+  /* ── Live dot ── */
   .live-dot { display:inline-flex; align-items:center; gap:6px; font-family:'Cinzel',serif; font-size:9px; letter-spacing:3px; color:#4caf76; text-transform:uppercase; margin-bottom:14px; }
   .live-dot::before { content:''; width:7px; height:7px; background:#4caf76; border-radius:50%; animation:pulse 1.8s ease-in-out infinite; }
   @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.85)} }
 
+  /* ── Lista jugadores ── */
   .player-count { font-family:'Cinzel',serif; font-size:11px; letter-spacing:3px; color:var(--muted); margin-bottom:14px; }
   .player-count span { color:var(--gold); font-size:18px; font-weight:600; }
-  .players-grid { display:flex; flex-direction:column; gap:6px; max-height:340px; overflow-y:auto; padding-right:4px; }
+  .players-grid { display:flex; flex-direction:column; gap:6px; max-height:380px; overflow-y:auto; padding-right:4px; }
   .players-grid::-webkit-scrollbar { width:4px; }
   .players-grid::-webkit-scrollbar-thumb { background:var(--gold-dim); border-radius:2px; }
   .player-item { display:flex; align-items:center; gap:12px; background:rgba(255,255,255,0.03); border:1px solid rgba(201,168,76,0.1); border-radius:3px; padding:9px 14px; animation:slideIn 0.25s ease both; }
   .player-num { font-family:'Cinzel',serif; font-size:10px; color:var(--gold-dim); width:20px; text-align:center; flex-shrink:0; }
-  .player-avatar { width:32px; height:32px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:16px; flex-shrink:0; border:1px solid rgba(255,255,255,0.1); }
-  .player-name { flex:1; font-size:17px; }
+  .player-avatar { width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:17px; flex-shrink:0; border:1px solid rgba(255,255,255,0.1); }
+  .player-info { flex:1; min-width:0; }
+  .player-name { font-size:17px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .player-meta { display:flex; align-items:center; gap:10px; margin-top:1px; }
   .player-class { font-family:'Cinzel',serif; font-size:9px; letter-spacing:2px; color:var(--muted); text-transform:uppercase; }
+  .player-lvl { font-family:'Cinzel',serif; font-size:9px; letter-spacing:1px; color:var(--gold-dim); }
   .empty-msg { text-align:center; padding:32px 0; color:var(--muted); font-style:italic; font-size:15px; opacity:0.7; }
   .warning { background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.2); border-radius:3px; padding:10px 14px; font-size:14px; color:var(--gold-dim); margin-bottom:14px; font-style:italic; display:none; }
   .error-msg { color:#e57368; font-size:13px; font-style:italic; margin-top:8px; min-height:20px; }
 
+  /* ── Admin panel ── */
+  #adminPanel { display:none; }
+  .admin-panel-inner { background:rgba(201,168,76,0.04); border:1px solid rgba(201,168,76,0.15); border-radius:3px; padding:16px 18px; }
+  .admin-label { font-family:'Cinzel',serif; font-size:9px; letter-spacing:4px; color:var(--gold-dim); text-transform:uppercase; margin-bottom:12px; display:flex; align-items:center; gap:8px; }
+  .admin-label::before { content:'★'; }
+  .shuffle-controls { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+
+  /* ── Equipos ── */
   .teams-container { display:none; animation:fadeUp 0.4s ease both; margin-top:24px; }
   .vs-row { display:grid; grid-template-columns:1fr auto 1fr; gap:16px; align-items:stretch; }
   @media(max-width:560px){ .vs-row{grid-template-columns:1fr;} .vs-badge{display:none;} }
@@ -372,20 +446,31 @@
   .team1::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:linear-gradient(90deg,var(--red),transparent); }
   .team2 { background:linear-gradient(135deg,rgba(26,111,160,0.12),rgba(26,111,160,0.04)); border:1px solid rgba(26,111,160,0.35); }
   .team2::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:linear-gradient(90deg,transparent,var(--blue)); }
-  .team-label { font-family:'Cinzel',serif; font-size:10px; letter-spacing:4px; text-transform:uppercase; margin-bottom:14px; }
+  .team-label { font-family:'Cinzel',serif; font-size:10px; letter-spacing:4px; text-transform:uppercase; margin-bottom:6px; }
   .team1 .team-label { color:#e57368; } .team2 .team-label { color:#5daee8; }
+  .team-sum { font-family:'Cinzel',serif; font-size:9px; letter-spacing:2px; color:var(--muted); margin-bottom:12px; }
   .team-player { display:flex; align-items:center; gap:10px; padding:7px 0; border-bottom:1px solid rgba(255,255,255,0.05); }
   .team-player:last-child { border-bottom:none; }
-  .team-player-name { flex:1; font-size:17px; }
+  .team-player-info { flex:1; }
+  .team-player-name { font-size:17px; }
+  .team-player-sub { display:flex; gap:8px; margin-top:1px; }
   .team-player-class { font-family:'Cinzel',serif; font-size:9px; letter-spacing:1px; color:var(--muted); }
+  .team-player-lvl { font-family:'Cinzel',serif; font-size:9px; letter-spacing:1px; color:var(--gold-dim); }
   .vs-badge { display:flex; align-items:center; justify-content:center; font-family:'Cinzel Decorative',serif; font-size:22px; font-weight:900; color:var(--gold); text-shadow:0 0 20px rgba(201,168,76,0.5); letter-spacing:2px; }
+  .sorteo-ts { font-family:'Cinzel',serif; font-size:9px; letter-spacing:2px; color:var(--muted); margin-bottom:16px; font-style:italic; }
+
+  /* Balance warnings */
+  .balance-warnings { margin-top:16px; display:flex; flex-direction:column; gap:6px; }
+  .balance-warn { background:rgba(192,57,43,0.08); border:1px solid rgba(192,57,43,0.25); border-radius:3px; padding:8px 14px; font-size:13px; color:#e57368; font-style:italic; }
+
   .bench-section { margin-top:16px; padding:14px; background:rgba(255,255,255,0.02); border:1px dashed rgba(255,255,255,0.1); border-radius:3px; }
   .bench-title { font-family:'Cinzel',serif; font-size:9px; letter-spacing:3px; color:var(--muted); text-transform:uppercase; margin-bottom:8px; }
   .bench-players { display:flex; flex-wrap:wrap; gap:8px; }
   .bench-chip { display:flex; align-items:center; gap:6px; background:rgba(255,255,255,0.04); border:1px solid var(--border); border-radius:20px; padding:4px 10px 4px 6px; font-size:14px; }
   .bench-chip-class { font-family:'Cinzel',serif; font-size:8px; letter-spacing:1px; color:var(--muted); }
-  .sorteo-ts { font-family:'Cinzel',serif; font-size:9px; letter-spacing:2px; color:var(--muted); margin-bottom:16px; font-style:italic; }
+  .bench-chip-lvl { font-family:'Cinzel',serif; font-size:8px; color:var(--gold-dim); }
 
+  /* Character colors */
   .cls-mago       { background:rgba(140,60,200,0.25); }
   .cls-blacksmith { background:rgba(160,100,40,0.3); }
   .cls-ninja      { background:rgba(40,160,100,0.25); }
@@ -398,11 +483,28 @@
 </style>
 </head>
 <body>
+
+<!-- Audio -->
+<audio id="bgMusic" loop>
+  <source src="Pista.mp3" type="audio/mpeg">
+</audio>
+
 <div class="container">
 
   <header>
     <div class="logo-line"><div class="brand">RAKION</div></div>
     <div class="subtitle">Amistoso — Inscripción en vivo</div>
+
+    <!-- Player de música -->
+    <div class="music-bar">
+      <button class="music-btn" id="musicBtn" onclick="toggleMusic()" title="Reproducir / Pausar">▶</button>
+      <div class="equalizer" id="equalizer">
+        <span></span><span></span><span></span><span></span><span></span>
+      </div>
+      <span class="music-info" id="musicInfo">Pista</span>
+      <input type="range" class="music-vol" id="volSlider" min="0" max="1" step="0.05" value="0.4" oninput="setVolume(this.value)" title="Volumen">
+    </div>
+
     <div class="header-admin">
       <div class="admin-badge" id="adminBadge">
         Admin
@@ -436,7 +538,7 @@
         <div>
           <label>Personaje</label>
           <select id="classSelect">
-            <option value="">— Elige personaje —</option>
+            <option value="">— Elige —</option>
             <option value="Mago">🔮 Mago</option>
             <option value="Blacksmith">🔨 Blacksmith</option>
             <option value="Ninja">🌿 Ninja</option>
@@ -445,8 +547,12 @@
           </select>
         </div>
         <div>
+          <label>Nivel (11-99)</label>
+          <input type="number" id="levelInput" placeholder="Ej: 45" min="11" max="99">
+        </div>
+        <div class="full">
           <label>&nbsp;</label>
-          <button class="btn btn-primary" onclick="addPlayer()">Apuntarme</button>
+          <button class="btn btn-primary" onclick="addPlayer()" style="width:100%">Apuntarme</button>
         </div>
       </div>
       <div class="error-msg" id="errorMsg"></div>
@@ -464,7 +570,7 @@
     </div>
   </div>
 
-  <!-- Panel sorteo (solo admin lo ve) -->
+  <!-- Panel admin -->
   <div class="panel" id="adminPanel" style="animation-delay:0.3s">
     <div class="panel-title">Control de sala</div>
     <div class="admin-panel-inner">
@@ -487,14 +593,17 @@
       <div class="vs-row">
         <div class="team-panel team1">
           <div class="team-label">⚔ Equipo 1</div>
+          <div class="team-sum" id="team1Sum"></div>
           <div id="team1List"></div>
         </div>
         <div class="vs-badge">VS</div>
         <div class="team-panel team2">
           <div class="team-label">🛡 Equipo 2</div>
+          <div class="team-sum" id="team2Sum"></div>
           <div id="team2List"></div>
         </div>
       </div>
+      <div class="balance-warnings" id="balanceWarnings"></div>
       <div class="bench-section" id="benchSection" style="display:none">
         <div class="bench-title">🪑 En la banca</div>
         <div class="bench-players" id="benchList"></div>
@@ -503,10 +612,71 @@
   </div>
 
 </div>
+
 <script>
   const CLASS_ICONS = {'Mago':'🔮','Blacksmith':'🔨','Ninja':'🌿','Guerrero':'⚔️','Arquera':'🏹'};
   const CLASS_CSS   = {'Mago':'cls-mago','Blacksmith':'cls-blacksmith','Ninja':'cls-ninja','Guerrero':'cls-guerrero','Arquera':'cls-arquera'};
 
+  // ── Música ──
+  const audio = document.getElementById('bgMusic');
+  audio.volume = 0.4;
+  let musicPlaying = false;
+
+  function toggleMusic() {
+    if (musicPlaying) {
+      audio.pause();
+      musicPlaying = false;
+      document.getElementById('musicBtn').textContent = '▶';
+      document.getElementById('musicBtn').classList.remove('music-playing');
+      document.getElementById('equalizer').classList.remove('active');
+      document.getElementById('musicInfo').textContent = 'Pista';
+    } else {
+      audio.play().then(() => {
+        musicPlaying = true;
+        document.getElementById('musicBtn').textContent = '⏸';
+        document.getElementById('musicBtn').classList.add('music-playing');
+        document.getElementById('equalizer').classList.add('active');
+        document.getElementById('musicInfo').textContent = '♪ Sonando';
+      }).catch(() => {
+        document.getElementById('musicInfo').textContent = 'Sin archivo';
+      });
+    }
+  }
+
+  function setVolume(v) { audio.volume = v; }
+
+  // Efecto de sonido al sortear (drum roll sintético con Web Audio)
+  function playDrum() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const times = [0, 0.08, 0.16, 0.24, 0.30, 0.36, 0.40, 0.44];
+      times.forEach((t, i) => {
+        const osc  = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.frequency.value = 80 + i * 10;
+        gain.gain.setValueAtTime(0.3, ctx.currentTime + t);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.15);
+        osc.start(ctx.currentTime + t);
+        osc.stop(ctx.currentTime + t + 0.15);
+      });
+      // Fanfare al final
+      const fanfare = [523, 659, 784, 1047];
+      fanfare.forEach((freq, i) => {
+        const osc  = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.type = 'square';
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.15, ctx.currentTime + 0.55 + i * 0.1);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.55 + i * 0.1 + 0.2);
+        osc.start(ctx.currentTime + 0.55 + i * 0.1);
+        osc.stop(ctx.currentTime + 0.55 + i * 0.1 + 0.2);
+      });
+    } catch(e) {}
+  }
+
+  // ── UI helpers ──
   function showAlreadyIn(name) {
     document.getElementById('registerForm').style.display = 'none';
     const b = document.getElementById('alreadyInBanner');
@@ -514,30 +684,59 @@
     b.innerHTML = '✓ Ya estás apuntado como <strong>' + escHtml(name) + '</strong>. ¡Espera el sorteo!';
   }
 
-  function renderTeams(t1,t2,bench) {
+  function renderTeams(t1, t2, bench, warnings) {
     document.getElementById('team1List').innerHTML = t1.map(tpHTML).join('');
     document.getElementById('team2List').innerHTML = t2.map(tpHTML).join('');
+
+    const sum1 = t1.reduce((a,p) => a + (p.lvl||0), 0);
+    const sum2 = t2.reduce((a,p) => a + (p.lvl||0), 0);
+    document.getElementById('team1Sum').textContent = 'Poder total: ' + sum1;
+    document.getElementById('team2Sum').textContent = 'Poder total: ' + sum2;
+
+    // Advertencias de balance
+    const warnBox = document.getElementById('balanceWarnings');
+    if (warnings && warnings.length) {
+      warnBox.innerHTML = warnings.map(w => '<div class="balance-warn">'+escHtml(w)+'</div>').join('');
+      warnBox.style.display = 'flex';
+    } else {
+      warnBox.innerHTML = '<div class="balance-warn" style="background:rgba(40,160,100,0.08);border-color:rgba(40,160,100,0.25);color:#4caf76">✓ Equipos balanceados correctamente.</div>';
+      warnBox.style.display = 'flex';
+    }
+
     const bs = document.getElementById('benchSection');
     if (bench && bench.length) {
       bs.style.display = 'block';
       document.getElementById('benchList').innerHTML = bench.map(p =>
-        '<div class="bench-chip"><span>'+CLASS_ICONS[p.cls]+'</span><span>'+escHtml(p.name)+'</span><span class="bench-chip-class">'+p.cls+'</span></div>'
+        '<div class="bench-chip"><span>'+CLASS_ICONS[p.cls]+'</span><span>'+escHtml(p.name)+'</span>' +
+        '<span class="bench-chip-class">'+p.cls+'</span>' +
+        '<span class="bench-chip-lvl">Nv.'+p.lvl+'</span></div>'
       ).join('');
     } else { bs.style.display = 'none'; }
   }
 
+  window.renderTeams = renderTeams;
+
   function tpHTML(p) {
-    return '<div class="team-player"><span style="font-size:18px">'+CLASS_ICONS[p.cls]+'</span><span class="team-player-name">'+escHtml(p.name)+'</span><span class="team-player-class">'+p.cls+'</span></div>';
+    return '<div class="team-player">' +
+      '<span style="font-size:18px">'+CLASS_ICONS[p.cls]+'</span>' +
+      '<div class="team-player-info">' +
+        '<div class="team-player-name">'+escHtml(p.name)+'</div>' +
+        '<div class="team-player-sub">' +
+          '<span class="team-player-class">'+p.cls+'</span>' +
+          '<span class="team-player-lvl">Nv. '+p.lvl+'</span>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
   }
 
   function escHtml(s)  { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
   function escAttr(s)  { return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
 
-  // Exponer renderTeams para el módulo
-  window.renderTeams = renderTeams;
-
   document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('nameInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') window.addPlayer && addPlayer();
+    });
+    document.getElementById('levelInput').addEventListener('keydown', e => {
       if (e.key === 'Enter') window.addPlayer && addPlayer();
     });
   });
